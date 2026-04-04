@@ -9,6 +9,6 @@ dependencies  = []
 Repository = "https://github.com/Nekodificador/ComfyUI-NKD-Popup-Preview"
 
 [tool.comfy]
-PublisherId = ""
+PublisherId = "nekodificador"
 DisplayName = "NKD Popup Preview"
 Icon = ""
