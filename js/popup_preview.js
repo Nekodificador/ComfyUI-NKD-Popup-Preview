@@ -34,12 +34,14 @@ function viewerHtmlUrl() {
 
 class PopupWin {
     constructor(nodeId) {
-        this.nodeId     = String(nodeId);
-        this.win        = null;
-        this.currentUrl = null;
-        this._title     = "Preview Window";
-        this._opening   = false;
-        this._pipMode   = false; // true when the window is a Document PiP
+        this.nodeId       = String(nodeId);
+        this.win          = null;
+        this.compositeUrl = null;
+        this.imageUrl     = null;
+        this.maskUrl      = null;
+        this._title       = "Preview Window";
+        this._opening     = false;
+        this._pipMode     = false;
     }
 
     setTitle(title) {
@@ -49,19 +51,19 @@ class PopupWin {
         }
     }
 
-    /** Called on node execution: update existing window or open a new one. */
-    showImage(imgData) {
-        this.currentUrl = buildViewUrl(imgData);
-        // Only update if already open; never auto-open on execution.
+    /** Store the three URLs and push them to an open viewer window. */
+    showImages(compositeUrl, imageUrl, maskUrl) {
+        this.compositeUrl = compositeUrl || null;
+        this.imageUrl     = imageUrl     || null;
+        this.maskUrl      = maskUrl      || null;
         if (this.win && !this.win.closed) {
-            this._updateImage(this.currentUrl);
+            this._pushUrls();
         }
     }
 
     /** Called from node button / context menu. */
     open() {
         if (this.win && !this.win.closed) {
-            // PiP windows are always on top; regular windows need a focus call.
             if (!this._pipMode) this.win.focus();
         } else {
             this._openViewer();
@@ -84,9 +86,10 @@ class PopupWin {
 
     async _calcWindowSize() {
         let winW = 800, winH = 680;
-        if (this.currentUrl) {
+        const sizeUrl = this.compositeUrl || this.imageUrl;
+        if (sizeUrl) {
             try {
-                const { w, h } = await loadImageDimensions(this.currentUrl);
+                const { w, h } = await loadImageDimensions(sizeUrl);
                 const maxW = Math.round(screen.availWidth  * 0.9);
                 const maxH = Math.round(screen.availHeight * 0.9);
                 const s = Math.min(1, maxW / w, maxH / h);
@@ -103,7 +106,6 @@ class PopupWin {
 
         const pipWin = await window.documentPictureInPicture.requestWindow({ width: winW, height: winH });
 
-        // Register cleanup immediately so the window is tracked from the start.
         this.win      = pipWin;
         this._pipMode = true;
         pipWin.addEventListener("pagehide", () => {
@@ -112,38 +114,34 @@ class PopupWin {
         });
 
         try {
-            // Fetch viewer.html and inject it into the blank PiP document.
             const html   = await fetch(viewerHtmlUrl()).then(r => r.text());
             const parser = new DOMParser();
             const parsed = parser.parseFromString(html, "text/html");
 
-            // Inject <style> blocks into PiP <head>.
             parsed.querySelectorAll("style").forEach(s => {
                 const ns = pipWin.document.createElement("style");
                 ns.textContent = s.textContent;
                 pipWin.document.head.appendChild(ns);
             });
 
-            // Inject body markup without scripts (innerHTML doesn't execute them).
             const bodyClone = parsed.body.cloneNode(true);
             bodyClone.querySelectorAll("script").forEach(s => s.remove());
             pipWin.document.body.innerHTML = bodyClone.innerHTML;
 
-            // Execute scripts in the PiP window's context by appending new elements.
             parsed.querySelectorAll("script").forEach(s => {
                 const ns = pipWin.document.createElement("script");
                 ns.textContent = s.textContent;
                 pipWin.document.body.appendChild(ns);
-                // Each script runs synchronously when appended; the IIFE in
-                // viewer.html executes here and binds events to pipWin.document.
             });
 
-            // Set title and seed the initial image (location.search is empty in PiP).
             pipWin.document.title = this._title;
-            const pipImg = pipWin.document.getElementById("img");
-            if (pipImg && this.currentUrl) {
-                pipImg.style.opacity = "0.4";
-                pipImg.src = this.currentUrl;
+
+            // Push all three URLs and set initial mode.
+            if (pipWin.window?.setUrls) {
+                pipWin.window.setUrls(this.compositeUrl, this.imageUrl, this.maskUrl);
+            }
+            if (this.maskUrl && pipWin.window?.setViewMode) {
+                pipWin.window.setViewMode("overlay");
             }
         } catch (err) {
             console.error("NKD PiP viewer load error:", err);
@@ -166,7 +164,7 @@ class PopupWin {
 
         if (!winW) {
             const dims = await this._calcWindowSize();
-            winW = dims.winW; 
+            winW = dims.winW;
             winH = dims.winH;
             left = Math.round((screen.availWidth  - winW) / 2) + (screen.availLeft ?? 0);
             top  = Math.round((screen.availHeight - winH) / 2) + (screen.availTop  ?? 0);
@@ -174,7 +172,13 @@ class PopupWin {
 
         const opts = `width=${winW},height=${winH},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
 
-        const qp  = new URLSearchParams({ img: this.currentUrl ?? "", title: this._title });
+        const qp = new URLSearchParams({
+            composite: this.compositeUrl ?? "",
+            image:     this.imageUrl     ?? "",
+            mask:      this.maskUrl      ?? "",
+            mode:      this.maskUrl ? "overlay" : "image",
+            title:     this._title,
+        });
         const url = `${viewerHtmlUrl()}?${qp}`;
 
         this.win      = window.open(url, `nkd_preview_${this.nodeId}`, opts);
@@ -206,24 +210,23 @@ class PopupWin {
             else saveState();
         }, 500);
 
-        this.win.addEventListener("beforeunload", () => { 
+        this.win.addEventListener("beforeunload", () => {
             saveState();
             clearInterval(saveInterval);
-            this.win = null; 
+            this.win = null;
         });
     }
 
-    _updateImage(url) {
+    /** Push the three URLs to the viewer window. */
+    _pushUrls() {
         try {
-            const img = this.win.document.getElementById("img");
-            if (!img) { this._openViewer(); return; }
-            img.style.opacity = "0.4";
-            img.src = url;
-            // viewer.html's img.load listener calls fit() + restores opacity.
+            if (!this.win || this.win.closed) return;
+            if (this.win.setUrls) {
+                this.win.setUrls(this.compositeUrl, this.imageUrl, this.maskUrl);
+            }
         } catch {
             this.win      = null;
             this._pipMode = false;
-            this._openViewer();
         }
     }
 
@@ -250,9 +253,33 @@ app.registerExtension({
             if (!detail?.output?.images?.length) return;
             const node = app.graph?.getNodeById(detail.node);
             if (!node || node.comfyClass !== NODE_TYPE) return;
+
             const popup = getPopup(node.id);
             popup.setTitle(node.title || "Preview Window");
-            popup.showImage(detail.output.images[0]);
+
+            const imgs = detail.output.images;
+
+            // Decode batch by frame count:
+            //  3 = [composite, original, mask]  (image + mask connected)
+            //  1 = [single image]                (image-only / mask-only / blank)
+            let compositeUrl, imageUrl = null, maskUrl = null;
+            if (imgs.length === 3) {
+                compositeUrl = buildViewUrl(imgs[0]);
+                imageUrl     = buildViewUrl(imgs[1]);
+                maskUrl      = buildViewUrl(imgs[2]);
+            } else {
+                compositeUrl = buildViewUrl(imgs[0]);
+            }
+
+            popup.showImages(compositeUrl, imageUrl, maskUrl);
+
+            // Node thumbnail always shows the composite (first frame).
+            const thumb = new Image();
+            thumb.onload = () => {
+                node.imgs = [thumb];
+                app.graph?.setDirtyCanvas(true, false);
+            };
+            thumb.src = compositeUrl;
         });
     },
 
@@ -262,12 +289,12 @@ app.registerExtension({
         const origCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             origCreated?.apply(this, arguments);
-            this.size = [210, 90];
+            this.size = [240, 110];
 
-            // Suppress the default node thumbnail.
+            // Suppress the default node thumbnail triggered by onExecuted.
             this.onExecuted = function () {};
 
-            this.addWidget("button", "↗ Open Viewer", null, () => {
+            this.addWidget("button", "\u2197 Open Viewer", null, () => {
                 const p = getPopup(String(this.id));
                 p.setTitle(this.title || "Preview Window");
                 p.open();
@@ -293,7 +320,7 @@ app.registerExtension({
         if (node.comfyClass !== NODE_TYPE) return [];
         return [
             {
-                content: "↗ Open Viewer",
+                content: "\u2197 Open Viewer",
                 callback: () => {
                     const p = getPopup(String(node.id));
                     p.setTitle(node.title || "Preview Window");

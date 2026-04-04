@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"d:\\\\IA\\\\Comfy Manual\\\\ComfyUI\\\\custom_nodes\" -type f -name \"*.py\" -exec grep -l \"io.ComfyNode\\\\|ComfyExtension\" {} \\\\;)",
+      "Bash(grep -l \"io.Image.Input\\\\|io.Float.Input\" \"d:\\\\IA\\\\Comfy Manual\\\\ComfyUI\\\\custom_nodes\"/**/nodes.py)",
+      "Bash(find \"d:\\\\IA\\\\Comfy Manual\\\\ComfyUI\\\\comfy_extras\" -type f -name \"*.py\" -exec grep -l \"io.ComfyNode\\\\|io.NodeOutput\" {} \\\\;)"
+    ]
+  }
+}

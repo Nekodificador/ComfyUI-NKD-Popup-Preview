@@ -12,10 +12,10 @@ body.panning{cursor:grabbing}
 #wrap{
     width:100%;height:100%;position:relative;overflow:hidden;
     background-color:#050505;
-    background-image: 
-        linear-gradient(45deg, #101010 25%, transparent 25%), 
-        linear-gradient(-45deg, #101010 25%, transparent 25%), 
-        linear-gradient(45deg, transparent 75%, #101010 75%), 
+    background-image:
+        linear-gradient(45deg, #101010 25%, transparent 25%),
+        linear-gradient(-45deg, #101010 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #101010 75%),
         linear-gradient(-45deg, transparent 75%, #101010 75%);
     background-size:20px 20px;
     background-position:0 0, 0 10px, 10px -10px, -10px 0px;
@@ -28,9 +28,10 @@ body.panning{cursor:grabbing}
 }
 #bar{
     position:fixed;bottom:18px;right:18px;
-    display:flex;gap:8px;
+    display:flex;flex-direction:column;align-items:flex-end;gap:6px;
     opacity:0;transition:opacity 0.25s;
 }
+#bar .row{display:flex;gap:8px;}
 body:hover #bar{opacity:1}
 #bar button{
     background:rgba(28,28,28,0.92);
@@ -42,11 +43,11 @@ body:hover #bar{opacity:1}
 }
 #bar button:hover{background:rgba(72,72,72,0.96);color:#fff}
 #bar button.active{background:rgba(46,58,46,0.95);color:#7dc97d}
+#bar button.dim{opacity:0.35;pointer-events:none}
 #bar .mode-group{display:flex;border-radius:6px;overflow:hidden;border:1px solid rgba(255,255,255,0.12);background:rgba(18,18,18,0.6)}
 #bar .mode-group button{border:none;border-radius:0;border-right:1px solid rgba(255,255,255,0.12);margin:0;background:transparent}
 #bar .mode-group button:last-child{border-right:none}
 #bar .mode-group button.active{background:rgba(46,58,46,0.95);color:#7dc97d}
-body.mask-mode-active #wrap{background-image:none;background-color:#000}
 #dims{
     position:fixed;bottom:20px;left:16px;
     font:11px monospace;color:rgba(255,255,255,0.22);
@@ -65,55 +66,46 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
 </style>
 </head>
 <body>
-<!-- SVG Filters for Mask Display -->
-<svg width="0" height="0" style="position:absolute;pointer-events:none;">
-<filter id="alpha-to-mask" color-interpolation-filters="sRGB">
-  <feColorMatrix type="matrix" values="
-    0 0 0 1 0
-    0 0 0 1 0
-    0 0 0 1 0
-    0 0 0 0 1" />
-</filter>
-<filter id="alpha-overlay" color-interpolation-filters="sRGB">
-  <feColorMatrix type="matrix" in="SourceGraphic" result="tint" values="
-    0 0 0 0 1
-    0 0 0 0 0
-    0 0 0 0 0.33
-    0 0 0 0.6 0" />
-  <feBlend in="tint" in2="SourceGraphic" mode="normal" />
-</filter>
-</svg>
 <div id="wrap">
   <img id="img" alt="" draggable="false">
   <div id="info-panel"><div id="ip-dims">—</div><div id="ip-zoom">Zoom: 100%</div><div id="ip-format">Format: RGB</div></div>
 </div>
 <div id="dims"></div>
 <div id="bar">
-  <button id="btn-info">&#x2139; Info</button>
-  <span class="mode-group">
-    <button id="btn-mode-image" class="active">Image</button>
-    <button id="btn-mode-mask">Mask</button>
-    <button id="btn-mode-overlay">Overlay</button>
-  </span>
-  <button id="btn-fit-zoom" title="Fit image to window (0)">&#x26F6; Fit Image</button>
-  <button id="btn-100" title="Actual Size / Real Pixels (1)">1:1 Pixel</button>
-  <button id="btn-adjust" title="Fit window to current zoom level">&#x2921; Fit Window</button>
-  <button id="btn-close">&#x2715; Close</button>
+  <div class="row">
+    <span class="mode-group">
+      <button id="btn-mode-image" class="active">Image</button>
+      <button id="btn-mode-mask">Mask</button>
+      <button id="btn-mode-overlay">Overlay</button>
+    </span>
+  </div>
+  <div class="row">
+    <button id="btn-info">&#x2139; Info</button>
+    <button id="btn-fit-zoom" title="Fit image to window (0)">&#x26F6; Fit Image</button>
+    <button id="btn-100" title="Actual Size / Real Pixels (1)">1:1 Pixel</button>
+    <button id="btn-adjust" title="Fit window to current zoom level">&#x2921; Fit Window</button>
+    <button id="btn-close">&#x2715; Close</button>
+  </div>
 </div>
 <script>
 (function () {
     const params    = new URLSearchParams(location.search);
-    const initImg   = params.get("img")   || "";
     const initTitle = params.get("title") || "Preview Window";
     document.title  = initTitle;
 
-    const img    = document.getElementById("img");
-    const wrap   = document.getElementById("wrap");
-    const dims   = document.getElementById("dims");
-    const panel  = document.getElementById("info-panel");
-    const ipDims = document.getElementById("ip-dims");
-    const ipZoom = document.getElementById("ip-zoom");
-    const ipFormat = document.getElementById("ip-format");
+    const img     = document.getElementById("img");
+    const wrap    = document.getElementById("wrap");
+    const dims    = document.getElementById("dims");
+    const panel   = document.getElementById("info-panel");
+    const ipDims  = document.getElementById("ip-dims");
+    const ipZoom  = document.getElementById("ip-zoom");
+    const ipFormat= document.getElementById("ip-format");
+
+    // ── URL state: one URL per view mode ─────────────────────────────────────
+    let compositeUrl = params.get("composite") || "";
+    let imageUrl     = params.get("image")     || "";
+    let maskUrl      = params.get("mask")      || "";
+    let initMode     = params.get("mode")      || "image";
 
     let scale = 1, tx = 0, ty = 0, fitScale = 1;
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
@@ -126,7 +118,7 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
 
     function fit() {
         var ww = wrap.clientWidth, wh = wrap.clientHeight;
-        var nw = img.naturalWidth,  nh = img.naturalHeight;
+        var nw = img.naturalWidth, nh = img.naturalHeight;
         if (!nw || !nh) return;
         fitScale = Math.min(ww / nw, wh / nh);
         scale = fitScale;
@@ -138,41 +130,66 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
         dims.textContent   = label;
     }
 
-    // Exposed so the parent page can trigger a refit after updating img.src.
     window.fit = fit;
-
-    // Refit whenever the window is resized (manual drag or the expand button).
     window.addEventListener("resize", fit);
 
+    // ── View modes ───────────────────────────────────────────────────────────
     const modeImg = document.getElementById("btn-mode-image");
     const modeMsk = document.getElementById("btn-mode-mask");
     const modeOvl = document.getElementById("btn-mode-overlay");
     const modes = ["image", "mask", "overlay"];
     let viewMode = "image";
 
-    function setViewMode(m) {
-        viewMode = m;
-        modeImg.classList.remove("active");
-        modeMsk.classList.remove("active");
-        modeOvl.classList.remove("active");
-        document.body.classList.remove("mask-mode-active");
-        img.style.filter = "none";
-        
-        if (m === "image") modeImg.classList.add("active");
-        if (m === "mask") {
-            modeMsk.classList.add("active");
-            document.body.classList.add("mask-mode-active");
-            img.style.filter = "url(#alpha-to-mask)";
+    function applyMode() {
+        var url = "";
+        if (viewMode === "image")        url = imageUrl || compositeUrl;
+        else if (viewMode === "mask")    url = maskUrl;
+        else if (viewMode === "overlay") url = compositeUrl;
+
+        // Fall back to image if the requested mode has no data.
+        if (!url && viewMode !== "image") {
+            viewMode = "image";
+            url = imageUrl || compositeUrl;
         }
-        if (m === "overlay") {
-            modeOvl.classList.add("active");
-            img.style.filter = "url(#alpha-overlay)";
+
+        if (url && url !== img.src) {
+            img.style.opacity = "0.4";
+            img.src = url;
         }
+
+        // Button highlights.
+        modeImg.classList.toggle("active", viewMode === "image");
+        modeMsk.classList.toggle("active", viewMode === "mask");
+        modeOvl.classList.toggle("active", viewMode === "overlay");
+
+        // Dim unavailable modes.
+        var hasMask = !!maskUrl;
+        modeMsk.classList.toggle("dim", !hasMask);
+        modeOvl.classList.toggle("dim", !hasMask);
+
+        // Info panel format hint.
+        ipFormat.textContent = viewMode === "mask" ? "Format: Grayscale"
+                             : maskUrl ? "Format: RGB + Mask" : "Format: RGB";
     }
 
-    modeImg.addEventListener("click", () => setViewMode("image"));
-    modeMsk.addEventListener("click", () => setViewMode("mask"));
-    modeOvl.addEventListener("click", () => setViewMode("overlay"));
+    function setViewMode(m) {
+        viewMode = m;
+        applyMode();
+    }
+
+    // Exposed so popup_preview.js can push new URLs live.
+    window.setUrls = function(composite, image, mask) {
+        compositeUrl = composite || "";
+        imageUrl     = image     || "";
+        maskUrl      = mask      || "";
+        applyMode();
+    };
+
+    window.setViewMode = setViewMode;
+
+    modeImg.addEventListener("click", function () { setViewMode("image"); });
+    modeMsk.addEventListener("click", function () { setViewMode("mask"); });
+    modeOvl.addEventListener("click", function () { setViewMode("overlay"); });
 
     // Info panel toggle
     document.getElementById("btn-info").addEventListener("click", function () {
@@ -186,25 +203,19 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
     });
 
     // Image load / error
+    var initDone = false;
     img.addEventListener("load", function () {
         fit();
         img.style.opacity = "1";
-        // Detect alpha channel presence via offscreen canvas
-        try {
-            var c = document.createElement("canvas");
-            c.width = 1; c.height = 1;
-            var ctx = c.getContext("2d");
-            ctx.drawImage(img, 0, 0, 1, 1);
-            var a = ctx.getImageData(0, 0, 1, 1).data[3];
-            ipFormat.textContent = "Format: " + (a < 255 ? "RGBA" : "RGB");
-        } catch { ipFormat.textContent = "Format: RGB"; }
+        if (!initDone) {
+            initDone = true;
+            if (initMode !== "image") setViewMode(initMode);
+        }
     });
     img.addEventListener("error", function () { img.style.opacity = "0.6"; });
 
-    if (initImg) {
-        img.style.opacity = "0.4";
-        img.src = initImg;
-    }
+    // Seed the initial view.
+    applyMode();
 
     // Wheel → zoom centered on cursor
     wrap.addEventListener("wheel", function (e) {
@@ -258,7 +269,7 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
         toggleZoom(e.clientX - rect.left, e.clientY - rect.top);
     });
 
-    // New zoom buttons
+    // Zoom buttons
     document.getElementById("btn-fit-zoom").addEventListener("click", fit);
 
     document.getElementById("btn-100").addEventListener("click", function () {
@@ -279,14 +290,12 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
         if (!nw || !nh) return;
         var maxW = Math.round(screen.availWidth  * 0.9);
         var maxH = Math.round(screen.availHeight * 0.9);
-        
-        // Window UI decorators (borders, titlebar)
+
         var dx = window.outerWidth - window.innerWidth;
         var dy = window.outerHeight - window.innerHeight;
         if (dx < 0 || isNaN(dx)) dx = 16;
         if (dy < 0 || isNaN(dy)) dy = 39;
 
-        // Target INNER size matching current zoom
         var curW = nw * scale;
         var curH = nh * scale;
 
@@ -307,7 +316,7 @@ body.mask-mode-active #wrap{background-image:none;background-color:#000}
             toggleZoom(rect.width / 2, rect.height / 2);
         }
         if (e.key === "m" || e.key === "M") {
-            const idx = modes.indexOf(viewMode);
+            var idx = modes.indexOf(viewMode);
             setViewMode(modes[(idx + 1) % modes.length]);
         }
     });
