@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-nkd-popup-preview"
+description = "A floating preview window node for ComfyUI. Ideal for multi-monitor setups."
+version = "1.0.0"
+license = { file = "LICENSE.txt" }
+dependencies  = []
+
+[project.urls]
+Repository = "https://github.com/Nekodificador/ComfyUI-NKD-Popup-Preview"
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "NKD Popup Preview"
+Icon = ""
