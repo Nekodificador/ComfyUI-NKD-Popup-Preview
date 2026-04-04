@@ -2,7 +2,6 @@
 <html lang="en" translate="no">
 <head>
 <meta charset="UTF-8">
-<meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Preview Window</title>
 <style>
@@ -67,23 +66,24 @@ body:hover #bar{opacity:1}
 <div id="dims"></div>
 <div id="bar">
   <button id="btn-info">&#x2139; Info</button>
-  <button id="btn-adjust" title="Fit window to image size">&#x2921;&nbsp; Fitting View</button>
-  <button id="btn-close">&#x2715;&nbsp; Close</button>
+  <button id="btn-fit-zoom" title="Fit image to window (0)">&#x26F6; Fit Image</button>
+  <button id="btn-100" title="Actual Size (1)">1:1 Pixel</button>
+  <button id="btn-adjust" title="Fit window to image size">&#x2921; Fit Window</button>
+  <button id="btn-close">&#x2715; Close</button>
 </div>
 <script>
 (function () {
-    const params    = new URLSearchParams(location.search);
-    const initImg   = params.get("img")   || "";
+    const params = new URLSearchParams(location.search);
+    const initImg = params.get("img") || "";
     const initTitle = params.get("title") || "Preview Window";
-    document.title  = initTitle;
+    document.title = initTitle;
 
-    const img    = document.getElementById("img");
-    const wrap   = document.getElementById("wrap");
-    const dims   = document.getElementById("dims");
-    const panel  = document.getElementById("info-panel");
+    const img = document.getElementById("img");
+    const wrap = document.getElementById("wrap");
+    const dims = document.getElementById("dims");
+    const panel = document.getElementById("info-panel");
     const ipDims = document.getElementById("ip-dims");
     const ipZoom = document.getElementById("ip-zoom");
-    const ipFormat = document.getElementById("ip-format");
 
     let scale = 1, tx = 0, ty = 0, fitScale = 1;
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
@@ -96,7 +96,7 @@ body:hover #bar{opacity:1}
 
     function fit() {
         var ww = wrap.clientWidth, wh = wrap.clientHeight;
-        var nw = img.naturalWidth,  nh = img.naturalHeight;
+        var nw = img.naturalWidth, nh = img.naturalHeight;
         if (!nw || !nh) return;
         fitScale = Math.min(ww / nw, wh / nh);
         scale = fitScale;
@@ -105,111 +105,105 @@ body:hover #bar{opacity:1}
         apply();
         var label = nw + " \u00d7 " + nh + " px";
         ipDims.textContent = label;
-        dims.textContent   = label;
+        dims.textContent = label;
     }
 
-    // Exposed so the parent page can trigger a refit after updating img.src.
     window.fit = fit;
-
-    // Refit whenever the window is resized (manual drag or the expand button).
     window.addEventListener("resize", fit);
 
-    // Info panel toggle
+    // Buttons
     document.getElementById("btn-info").addEventListener("click", function () {
         panel.classList.toggle("visible");
         this.classList.toggle("active", panel.classList.contains("visible"));
     });
 
-    // Close button
-    document.getElementById("btn-close").addEventListener("click", function () {
-        window.close();
+    document.getElementById("btn-fit-zoom").addEventListener("click", fit);
+
+    document.getElementById("btn-100").addEventListener("click", function () {
+        var rect = wrap.getBoundingClientRect();
+        var cx = rect.width / 2, cy = rect.height / 2;
+        var ns = 1.0;
+        var r = ns / scale;
+        tx = cx - (cx - tx) * r;
+        ty = cy - (cy - ty) * r;
+        scale = ns;
+        apply();
     });
 
-    // Image load / error
-    img.addEventListener("load",  function () { fit(); img.style.opacity = "1"; });
-    img.addEventListener("error", function () { img.style.opacity = "0.6"; });
+    document.getElementById("btn-adjust").addEventListener("click", function () {
+        var nw = img.naturalWidth, nh = img.naturalHeight;
+        if (!nw || !nh) return;
 
-    if (initImg) {
-        img.style.opacity = "0.4";
-        img.src = initImg;
-    }
+        // 1. Calculamos cuánto miden los bordes de la ventana de Windows
+        var dx = window.outerWidth - window.innerWidth;
+        var dy = window.outerHeight - window.innerHeight;
+        
+        // Fallback por si el navegador devuelve valores raros
+        if (dx < 0 || isNaN(dx)) dx = 16; 
+        if (dy < 0 || isNaN(dy)) dy = 39;
 
-    // Wheel → zoom centered on cursor
-    wrap.addEventListener("wheel", function (e) {
+        var maxW = Math.round(screen.availWidth * 0.95);
+        var maxH = Math.round(screen.availHeight * 0.95);
+
+        // 2. Ajustamos el tamaño basándonos en el zoom actual (scale)
+        var curW = nw * scale;
+        var curH = nh * scale;
+
+        // 3. Sumamos los bordes (dx, dy) al tamaño de la imagen
+        var w = Math.max(320, Math.min(Math.round(curW + dx), maxW));
+        var h = Math.max(240, Math.min(Math.round(curH + dy), maxH));
+        
+        var left = Math.round((screen.availWidth - w) / 2) + (screen.availLeft ?? 0);
+        var top = Math.round((screen.availHeight - h) / 2) + (screen.availTop ?? 0);
+
+        window.resizeTo(w, h);
+        window.moveTo(left, top);
+    });
+
+    document.getElementById("btn-close").addEventListener("click", () => window.close());
+
+    img.addEventListener("load", () => { fit(); img.style.opacity = "1"; });
+    if (initImg) img.src = initImg;
+
+    // Interaction (Wheel, Drag, DblClick)
+    wrap.addEventListener("wheel", e => {
         e.preventDefault();
         var rect = wrap.getBoundingClientRect();
         var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
         var factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
         var ns = Math.max(fitScale * 0.1, Math.min(scale * factor, fitScale * 32));
         var r = ns / scale;
-        tx = cx - (cx - tx) * r;
-        ty = cy - (cy - ty) * r;
-        scale = ns;
-        apply();
+        tx = cx - (cx - tx) * r; ty = cy - (cy - ty) * r;
+        scale = ns; apply();
     }, { passive: false });
 
-    // Left-click drag → pan
-    wrap.addEventListener("mousedown", function (e) {
+    wrap.addEventListener("mousedown", e => {
         if (e.button !== 0) return;
-        e.preventDefault();
-        panning = true;
-        sx = e.clientX; sy = e.clientY; stx = tx; sty = ty;
+        panning = true; sx = e.clientX; sy = e.clientY; stx = tx; sty = ty;
         document.body.classList.add("panning");
     });
-    document.addEventListener("mousemove", function (e) {
+    document.addEventListener("mousemove", e => {
         if (!panning) return;
-        tx = stx + (e.clientX - sx);
-        ty = sty + (e.clientY - sy);
-        apply();
+        tx = stx + (e.clientX - sx); ty = sty + (e.clientY - sy); apply();
     });
-    document.addEventListener("mouseup", function () {
-        panning = false;
-        document.body.classList.remove("panning");
+    document.addEventListener("mouseup", () => {
+        panning = false; document.body.classList.remove("panning");
     });
-
-    function toggleZoom(cx, cy) {
-        if (Math.abs(scale - 1.0) < 0.001) {
-            fit();
-        } else {
-            var ns = 1.0;
-            var r = ns / scale;
-            tx = cx - (cx - tx) * r;
-            ty = cy - (cy - ty) * r;
-            scale = ns;
-            apply();
-        }
-    }
-
-    // Double-click → toggle fit/100%
-    wrap.addEventListener("dblclick", function (e) {
+    wrap.addEventListener("dblclick", e => {
         var rect = wrap.getBoundingClientRect();
-        toggleZoom(e.clientX - rect.left, e.clientY - rect.top);
+        if (Math.abs(scale - 1.0) < 0.001) fit();
+        else {
+            var ns = 1.0, r = ns / scale;
+            tx = (e.clientX - rect.left) - (e.clientX - rect.left - tx) * r;
+            ty = (e.clientY - rect.top) - (e.clientY - rect.top - ty) * r;
+            scale = ns; apply();
+        }
     });
 
-    // ── Fit window to image ───────────────────────────────────────────────────
-    document.getElementById("btn-adjust").addEventListener("click", function () {
-        var nw = img.naturalWidth, nh = img.naturalHeight;
-        if (!nw || !nh) return;
-        var maxW = Math.round(screen.availWidth  * 0.9);
-        var maxH = Math.round(screen.availHeight * 0.9);
-        var s    = Math.min(1, maxW / nw, maxH / nh);
-        var w    = Math.max(320, Math.round(nw * s));
-        var h    = Math.max(240, Math.round(nh * s));
-        var left = Math.round((screen.availWidth  - w) / 2) + (screen.availLeft ?? 0);
-        var top  = Math.round((screen.availHeight - h) / 2) + (screen.availTop  ?? 0);
-        window.resizeTo(w, h);
-        window.moveTo(left, top);
-        // fit() is called automatically by the resize event listener.
-    });
-
-    // Keyboard shortcuts
-    document.addEventListener("keydown", function (e) {
+    document.addEventListener("keydown", e => {
         if (e.key === "Escape") window.close();
         if (e.key === "0" || e.key === "r") fit();
-        if (e.key === "1") {
-            var rect = wrap.getBoundingClientRect();
-            toggleZoom(rect.width / 2, rect.height / 2);
-        }
+        if (e.key === "1") document.getElementById("btn-100").click();
     });
 }());
 </script>
