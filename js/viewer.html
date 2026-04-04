@@ -4,12 +4,22 @@
 <meta charset="UTF-8">
 <meta name="google" content="notranslate">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NKD Popup Preview</title>
+<title>Preview Window</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 html,body{width:100%;height:100%;background:#080808;overflow:hidden;cursor:grab}
 body.panning{cursor:grabbing}
-#wrap{width:100%;height:100%;position:relative;overflow:hidden}
+#wrap{
+    width:100%;height:100%;position:relative;overflow:hidden;
+    background-color:#050505;
+    background-image: 
+        linear-gradient(45deg, #101010 25%, transparent 25%), 
+        linear-gradient(-45deg, #101010 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #101010 75%), 
+        linear-gradient(-45deg, transparent 75%, #101010 75%);
+    background-size:20px 20px;
+    background-position:0 0, 0 10px, 10px -10px, -10px 0px;
+}
 #img{
     position:absolute;top:0;left:0;
     display:block;transform-origin:0 0;
@@ -52,19 +62,19 @@ body:hover #bar{opacity:1}
 <body>
 <div id="wrap">
   <img id="img" alt="" draggable="false">
-  <div id="info-panel"><div id="ip-dims">—</div><div id="ip-zoom">Zoom: 100%</div></div>
+  <div id="info-panel"><div id="ip-dims">—</div><div id="ip-zoom">Zoom: 100%</div><div id="ip-format">Format: RGB</div></div>
 </div>
 <div id="dims"></div>
 <div id="bar">
   <button id="btn-info">&#x2139; Info</button>
-  <button id="btn-adjust" title="Ajustar ventana al tamaño de la imagen">&#x2921;&nbsp; Ajustar</button>
-  <button id="btn-close">&#x2715;&nbsp; Cerrar</button>
+  <button id="btn-adjust" title="Fit window to image size">&#x2921;&nbsp; Fitting View</button>
+  <button id="btn-close">&#x2715;&nbsp; Close</button>
 </div>
 <script>
 (function () {
     const params    = new URLSearchParams(location.search);
     const initImg   = params.get("img")   || "";
-    const initTitle = params.get("title") || "NKD Popup Preview";
+    const initTitle = params.get("title") || "Preview Window";
     document.title  = initTitle;
 
     const img    = document.getElementById("img");
@@ -73,6 +83,7 @@ body:hover #bar{opacity:1}
     const panel  = document.getElementById("info-panel");
     const ipDims = document.getElementById("ip-dims");
     const ipZoom = document.getElementById("ip-zoom");
+    const ipFormat = document.getElementById("ip-format");
 
     let scale = 1, tx = 0, ty = 0, fitScale = 1;
     let panning = false, sx = 0, sy = 0, stx = 0, sty = 0;
@@ -80,6 +91,7 @@ body:hover #bar{opacity:1}
     function apply() {
         img.style.transform = "translate("+tx+"px,"+ty+"px) scale("+scale+")";
         if (fitScale) ipZoom.textContent = "Zoom: " + Math.round((scale / fitScale) * 100) + "%";
+        img.style.imageRendering = scale > 1.0 ? "pixelated" : "auto";
     }
 
     function fit() {
@@ -155,8 +167,24 @@ body:hover #bar{opacity:1}
         document.body.classList.remove("panning");
     });
 
-    // Double-click → reset to fit
-    wrap.addEventListener("dblclick", function () { fit(); });
+    function toggleZoom(cx, cy) {
+        if (Math.abs(scale - 1.0) < 0.001) {
+            fit();
+        } else {
+            var ns = 1.0;
+            var r = ns / scale;
+            tx = cx - (cx - tx) * r;
+            ty = cy - (cy - ty) * r;
+            scale = ns;
+            apply();
+        }
+    }
+
+    // Double-click → toggle fit/100%
+    wrap.addEventListener("dblclick", function (e) {
+        var rect = wrap.getBoundingClientRect();
+        toggleZoom(e.clientX - rect.left, e.clientY - rect.top);
+    });
 
     // ── Fit window to image ───────────────────────────────────────────────────
     document.getElementById("btn-adjust").addEventListener("click", function () {
@@ -178,6 +206,10 @@ body:hover #bar{opacity:1}
     document.addEventListener("keydown", function (e) {
         if (e.key === "Escape") window.close();
         if (e.key === "0" || e.key === "r") fit();
+        if (e.key === "1") {
+            var rect = wrap.getBoundingClientRect();
+            toggleZoom(rect.width / 2, rect.height / 2);
+        }
     });
 }());
 </script>

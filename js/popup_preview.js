@@ -37,13 +37,13 @@ class PopupWin {
         this.nodeId     = String(nodeId);
         this.win        = null;
         this.currentUrl = null;
-        this._title     = "NKD Popup Preview";
+        this._title     = "Preview Window";
         this._opening   = false;
         this._pipMode   = false; // true when the window is a Document PiP
     }
 
     setTitle(title) {
-        this._title = title || "NKD Popup Preview";
+        this._title = title || "Preview Window";
         if (this.win && !this.win.closed) {
             try { this.win.document.title = this._title; } catch { /* cross-origin */ }
         }
@@ -153,10 +153,25 @@ class PopupWin {
 
     /** Fallback (no PiP support): open viewer.html in a regular popup window. */
     async _openWindow() {
-        const { winW, winH } = await this._calcWindowSize();
+        let winW, winH, left, top;
+        try {
+            const saved = JSON.parse(localStorage.getItem("nkd_preview_bounds"));
+            if (saved && saved.w && saved.h) {
+                winW = Math.max(320, saved.w);
+                winH = Math.max(240, saved.h);
+                left = saved.x || 0;
+                top  = saved.y || 0;
+            }
+        } catch { /* ignore parsing errors */ }
 
-        const left = Math.round((screen.availWidth  - winW) / 2) + (screen.availLeft ?? 0);
-        const top  = Math.round((screen.availHeight - winH) / 2) + (screen.availTop  ?? 0);
+        if (!winW) {
+            const dims = await this._calcWindowSize();
+            winW = dims.winW; 
+            winH = dims.winH;
+            left = Math.round((screen.availWidth  - winW) / 2) + (screen.availLeft ?? 0);
+            top  = Math.round((screen.availHeight - winH) / 2) + (screen.availTop  ?? 0);
+        }
+
         const opts = `width=${winW},height=${winH},left=${left},top=${top},toolbar=no,menubar=no,location=no,status=no,scrollbars=no`;
 
         const qp  = new URLSearchParams({ img: this.currentUrl ?? "", title: this._title });
@@ -168,13 +183,34 @@ class PopupWin {
         if (!this.win) {
             app.extensionManager?.toast?.add?.({
                 severity: "warn",
-                summary: "Ventana bloqueada",
-                detail: "Permite las ventanas emergentes en este sitio y pulsa '↗ Abrir visor' en el nodo.",
+                summary: "Popup Blocked",
+                detail: "Please allow popups for this site and click 'Open Viewer' on the node.",
                 life: 7000,
             });
             return;
         }
-        this.win.addEventListener("beforeunload", () => { this.win = null; });
+
+        const saveState = () => {
+            if (this.win && !this.win.closed) {
+                localStorage.setItem("nkd_preview_bounds", JSON.stringify({
+                    w: this.win.outerWidth || this.win.innerWidth,
+                    h: this.win.outerHeight || this.win.innerHeight,
+                    x: this.win.screenX,
+                    y: this.win.screenY
+                }));
+            }
+        };
+
+        const saveInterval = setInterval(() => {
+            if (!this.win || this.win.closed) clearInterval(saveInterval);
+            else saveState();
+        }, 500);
+
+        this.win.addEventListener("beforeunload", () => { 
+            saveState();
+            clearInterval(saveInterval);
+            this.win = null; 
+        });
     }
 
     _updateImage(url) {
@@ -215,7 +251,7 @@ app.registerExtension({
             const node = app.graph?.getNodeById(detail.node);
             if (!node || node.comfyClass !== NODE_TYPE) return;
             const popup = getPopup(node.id);
-            popup.setTitle(node.title || "Popup Preview");
+            popup.setTitle(node.title || "Preview Window");
             popup.showImage(detail.output.images[0]);
         });
     },
@@ -231,9 +267,9 @@ app.registerExtension({
             // Suppress the default node thumbnail.
             this.onExecuted = function () {};
 
-            this.addWidget("button", "↗ Abrir visor", null, () => {
+            this.addWidget("button", "↗ Open Viewer", null, () => {
                 const p = getPopup(String(this.id));
-                p.setTitle(this.title || "Popup Preview");
+                p.setTitle(this.title || "Preview Window");
                 p.open();
             }, { serialize: false });
         };
@@ -257,10 +293,10 @@ app.registerExtension({
         if (node.comfyClass !== NODE_TYPE) return [];
         return [
             {
-                content: "↗ Abrir visor",
+                content: "↗ Open Viewer",
                 callback: () => {
                     const p = getPopup(String(node.id));
-                    p.setTitle(node.title || "Popup Preview");
+                    p.setTitle(node.title || "Preview Window");
                     p.open();
                 },
             },
