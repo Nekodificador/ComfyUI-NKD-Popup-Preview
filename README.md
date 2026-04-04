@@ -2,6 +2,10 @@
 
 A custom node extension for [ComfyUI](https://github.com/comfyanonymous/ComfyUI) that allows you to preview generated images in a persistent, floating popup window. This is especially useful for users with multi-monitor setups because the popup window can be dragged to a secondary screen and maximized for a full-screen preview.
 
+
+https://github.com/user-attachments/assets/e52f40df-36a2-4027-8f7b-1e987ed2615f
+
+
 ## 🌟 Features
 
 - **Floating Image Preview**: Automatically opens a popup window showing the current output image during execution.
