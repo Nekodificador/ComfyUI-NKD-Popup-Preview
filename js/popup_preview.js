@@ -232,6 +232,38 @@ class PopupWin {
     }
 }
 
+// ── CopyImage ────────────────────────────────────────────────────────────────
+
+async function copyImageToClipboard(url) {
+    if (!url) {
+        app.extensionManager?.toast?.add?.({
+            severity: "warn",
+            summary: "No Image",
+            detail: "Run the node first to generate an image.",
+            life: 4000,
+        });
+        return;
+    }
+    try {
+        const blob = await fetch(url).then(r => r.blob());
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+        app.extensionManager?.toast?.add?.({
+            severity: "success",
+            summary: "Image Copied",
+            detail: "Image copied to clipboard.",
+            life: 3000,
+        });
+    } catch (err) {
+        console.error("NKD copy image error:", err);
+        app.extensionManager?.toast?.add?.({
+            severity: "error",
+            summary: "Copy Failed",
+            detail: "Could not copy image. Make sure the page has clipboard permissions.",
+            life: 6000,
+        });
+    }
+}
+
 // ── Extension ────────────────────────────────────────────────────────────────
 
 const popups = new Map();
@@ -262,7 +294,7 @@ app.registerExtension({
         const origCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             origCreated?.apply(this, arguments);
-            this.size = [210, 90];
+            this.size = [210, 118];
 
             // Suppress the default node thumbnail.
             this.onExecuted = function () {};
@@ -271,6 +303,11 @@ app.registerExtension({
                 const p = getPopup(String(this.id));
                 p.setTitle(this.title || "Preview Window");
                 p.open();
+            }, { serialize: false });
+
+            this.addWidget("button", "⧉ Copy Image", null, () => {
+                const p = getPopup(String(this.id));
+                copyImageToClipboard(p.currentUrl);
             }, { serialize: false });
         };
 
@@ -298,6 +335,13 @@ app.registerExtension({
                     const p = getPopup(String(node.id));
                     p.setTitle(node.title || "Preview Window");
                     p.open();
+                },
+            },
+            {
+                content: "⧉ Copy Image",
+                callback: () => {
+                    const p = getPopup(String(node.id));
+                    copyImageToClipboard(p.currentUrl);
                 },
             },
         ];
