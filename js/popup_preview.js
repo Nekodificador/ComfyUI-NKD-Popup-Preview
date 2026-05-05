@@ -28,7 +28,7 @@ function loadImageDimensions(url) {
 }
 
 function viewerHtmlUrl() {
-    return new URL("/extensions/ComfyUI-NKD-Popup-Preview/viewer.html", window.location.href).href;
+    return new URL("/extensions/ComfyUI-NKD-Preview-Tools/viewer.html", window.location.href).href;
 }
 
 // ── Primary node tracking ─────────────────────────────────────────────────────

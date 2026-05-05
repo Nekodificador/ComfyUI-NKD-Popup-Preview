@@ -1,14 +1,14 @@
 [project]
-name = "comfyui-nkd-popup-preview"
-description = "A floating preview window node for ComfyUI. Ideal for multi-monitor setups."
-version = "1.2.0"
+name = "comfyui-nkd-preview-tools"
+description = "Preview and masking tools for ComfyUI: floating popup preview window (multi-monitor friendly) and a procedural mask painter that bridges any IMAGE source into the native mask editor."
+version = "2.0.0"
 license = { file = "LICENSE.txt" }
 dependencies  = []
 
 [project.urls]
-Repository = "https://github.com/Nekodificador/ComfyUI-NKD-Popup-Preview"
+Repository = "https://github.com/Nekodificador/ComfyUI-NKD-Preview-Tools"
 
 [tool.comfy]
 PublisherId = "nekodificador"
-DisplayName = "NKD Popup Preview"
+DisplayName = "NKD Preview Tools"
 Icon = ""
