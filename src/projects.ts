@@ -110,12 +110,25 @@ export async function reveal(ref: FileRef): Promise<void> {
   await api.fetchApi(`/nkd/open?${q}`);
 }
 
+// How a saved still is versioned — a machine-local "how I save" preference, so it lives in
+// localStorage like the primary-node id, not in the shared project config. Default `auto`:
+// the whole point of the chip menu is that a save reads as a version, not an overwrite.
+export type SaveVersioning = "off" | "auto";
+const LS_VERSIONING = "nkd_save_versioning";
+
+export function saveVersioning(): SaveVersioning {
+  return localStorage.getItem(LS_VERSIONING) === "off" ? "off" : "auto";
+}
+export function setSaveVersioning(v: SaveVersioning): void {
+  localStorage.setItem(LS_VERSIONING, v);
+}
+
 /** Copy a file into the active project's folder. Returns the new /view item. */
 export async function saveToProject(ref: FileRef, prefix?: string): Promise<FileRef & { path: string }> {
   const res = await api.fetchApi("/nkd/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...ref, prefix }),
+    body: JSON.stringify({ ...ref, prefix, versioning: saveVersioning() }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -199,6 +212,13 @@ function openPicker(x: number, y: number): void {
       on: () => void setActive(undefined, c),
     });
   }
+  items.push({ label: "Versioning", header: true });
+  const mode = saveVersioning();
+  items.push({ label: "off (counter)", active: mode === "off",
+    on: () => setSaveVersioning("off") });
+  items.push({ label: "auto (next version)", active: mode === "auto",
+    on: () => setSaveVersioning("auto") });
+
   items.push({ label: " ", header: true });
   items.push({ label: "⚙ Manage projects…", on: () => openManager() });
   openMenu(x, y, items);

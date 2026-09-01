@@ -418,18 +418,17 @@ function serialiseTimeline(t) {
       ...a.fadeIn ? { fadeIn: a.fadeIn } : {},
       ...a.fadeOut ? { fadeOut: a.fadeOut } : {}
     })),
-    // ZOOM AND SCROLL ARE DELIBERATELY ABSENT. This string is a node INPUT, and a widget
-    // value goes verbatim into ComfyUI's cache signature (comfy_execution/caching.py:126),
-    // so anything written here invalidates the render. Where the user happens to be
-    // looking changes nothing about the output, yet it would cost a full re-render on
-    // every wheel tick. It lives in `node.properties` instead, which persists with the
-    // workflow but is not an input. The playhead DOES stay: it drives `current_frame` /
-    // `current_image`, so invalidating on a scrub is the point.
-    ui: { playhead: t.ui.playhead }
+    // ZOOM, SCROLL AND PLAYHEAD ARE DELIBERATELY ABSENT. This string is a node INPUT,
+    // and a widget value goes verbatim into ComfyUI's cache signature
+    // (comfy_execution/caching.py:126), so anything written here invalidates the render.
+    // The playhead only drives `current_frame` / `current_image` — scrubbing through the
+    // preview should never re-render the entire graph. All three live in
+    // `node.properties` instead, which persists with the workflow but is not an input.
+    ui: {}
   });
 }
 function viewState(t) {
-  return { zoom: t.ui.zoom, scroll: t.ui.scroll };
+  return { zoom: t.ui.zoom, scroll: t.ui.scroll, playhead: t.ui.playhead };
 }
 function sortClips(t) {
   const byTrack = (a, b) => a.track - b.track || a.start - b.start;
@@ -855,18 +854,18 @@ function forgetFile(ref) {
 const FILE_WIDGETS = ["file", "video", "audio", "image", "filename", "path"];
 const looksLikeFile = (v) => typeof v === "string" && v.length > 0 && v !== "none" && /\.[a-z0-9]{2,5}$/i.test(v);
 function resolveSource(node, slotName, maxDepth = 6, depth = 0) {
-  var _a, _b, _c, _d, _e;
+  var _a, _b, _c, _d;
   if (depth > maxDepth) return null;
   const slot = (_a = node == null ? void 0 : node.inputs) == null ? void 0 : _a.find((i) => {
     var _a2;
     return i.name === slotName || ((_a2 = i.name) == null ? void 0 : _a2.endsWith(`.${slotName}`));
   });
   if (!slot || slot.link == null) return null;
-  const link = (_c = (_b = node.graph) == null ? void 0 : _b.links) == null ? void 0 : _c[slot.link];
-  const src = link && ((_d = node.graph) == null ? void 0 : _d.getNodeById(link.origin_id));
+  const link = (_b = node.graph) == null ? void 0 : _b.getLink(slot.link);
+  const src = link && ((_c = node.graph) == null ? void 0 : _c.getNodeById(link.origin_id));
   if (!src) return null;
   for (const name of FILE_WIDGETS) {
-    const w = (_e = src.widgets) == null ? void 0 : _e.find((x) => x.name === name);
+    const w = (_d = src.widgets) == null ? void 0 : _d.find((x) => x.name === name);
     if (w && looksLikeFile(w.value)) {
       const raw = String(w.value);
       const m = /^(.*?)\s*\[(\w+)\]$/.exec(raw);
@@ -888,7 +887,7 @@ function resolveSource(node, slotName, maxDepth = 6, depth = 0) {
   return null;
 }
 function slotKind(node, slotName) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a, _b, _c, _d, _e;
   const slot = (_a = node == null ? void 0 : node.inputs) == null ? void 0 : _a.find(
     (i) => {
       var _a2;
@@ -896,11 +895,11 @@ function slotKind(node, slotName) {
     }
   );
   if (!slot || slot.link == null) return null;
-  const link = (_c = (_b = node.graph) == null ? void 0 : _b.links) == null ? void 0 : _c[slot.link];
+  const link = (_b = node.graph) == null ? void 0 : _b.getLink(slot.link);
   let type = link == null ? void 0 : link.type;
   if (!type && link) {
-    const src = (_d = node.graph) == null ? void 0 : _d.getNodeById(link.origin_id);
-    type = (_f = (_e = src == null ? void 0 : src.outputs) == null ? void 0 : _e[link.origin_slot]) == null ? void 0 : _f.type;
+    const src = (_c = node.graph) == null ? void 0 : _c.getNodeById(link.origin_id);
+    type = (_e = (_d = src == null ? void 0 : src.outputs) == null ? void 0 : _d[link.origin_slot]) == null ? void 0 : _e.type;
   }
   const t = String(type ?? "").toUpperCase();
   if (t.includes("VIDEO")) return "video";
@@ -2550,12 +2549,14 @@ class TimelineEditor {
   seek(frame, fromTransport = false) {
     const max = Math.max(0, this.contentFrames - 1);
     this.tl.ui.playhead = Math.max(0, Math.min(max, Math.round(frame)));
+    this.host.saveView();
     if (fromTransport) {
       this.requestRender();
       return;
     }
     if (this.transport.rate !== 0) this.transport.reanchor(this.tl.ui.playhead);
-    this.host.commit();
+    this.requestRender();
+    this.host.onSeek();
   }
   /** Requested count BEFORE quantising. In/out edits work on this, never on the
    *  quantised result: feeding a quantised value back in would shrink the range a little
@@ -3994,6 +3995,11 @@ const CSS = `
    No thumbnail of its own: ComfyUI already renders the node's preview from nodeOutputs,
    so one was the same pixels twice and a taller node for nothing.
    (No backticks in this file: the CSS lives in a template literal.) */
+.nkd-pp-bar {
+  flex-wrap: nowrap;       /* the buttons must never drop to a second line */
+  width: max-content;      /* content-sized, so offsetWidth is the intrinsic row width */
+  max-width: none;
+}
 `;
 function ensureStyles() {
   if (document.getElementById(STYLE_ID)) return;
@@ -4027,6 +4033,7 @@ function setWidgetVisible(node, name, visible) {
   else w.computeSize = () => [0, -4];
 }
 function keepDomWidgetSized(node, container, minW) {
+  const mw = () => typeof minW === "function" ? minW() : minW;
   const MAX_MARGIN = 40;
   let enforcing = false;
   let goodMargin = 15;
@@ -4040,7 +4047,8 @@ function keepDomWidgetSized(node, container, minW) {
     if (vueMode()) {
       if (container.style.width) container.style.width = "";
       const el2 = document.querySelector(`[data-node-id="${node.id}"]`);
-      if (el2 && el2.style.minWidth !== `${minW}px`) el2.style.minWidth = `${minW}px`;
+      const want = `${mw()}px`;
+      if (el2 && el2.style.minWidth !== want) el2.style.minWidth = want;
       return;
     }
     const nodeW = (_a = node.size) == null ? void 0 : _a[0];
@@ -4089,7 +4097,11 @@ function keepDomWidgetSized(node, container, minW) {
 function mountDomWidget(node, opts) {
   const container = document.createElement("div");
   container.style.width = "100%";
-  container.style.minWidth = `${opts.minWidth}px`;
+  const wantWidth = () => {
+    var _a;
+    return Math.max(opts.minWidth, Math.ceil(((_a = opts.minWidthOf) == null ? void 0 : _a.call(opts)) ?? 0));
+  };
+  container.style.minWidth = `${wantWidth()}px`;
   container.appendChild(opts.root);
   let measured = 0;
   let inset = 0;
@@ -4104,9 +4116,10 @@ function mountDomWidget(node, opts) {
     getMaxHeight: heightFor,
     getHeight: heightFor
   });
-  const widthKeeper = keepDomWidgetSized(node, container, opts.minWidth);
-  const minNodeWidth = () => opts.minWidth + widthKeeper.margin();
+  const widthKeeper = keepDomWidgetSized(node, container, wantWidth);
+  const minNodeWidth = () => wantWidth() + widthKeeper.margin();
   const resizeToContent = () => {
+    container.style.minWidth = `${wantWidth()}px`;
     node.setSize([Math.max(node.size[0], minNodeWidth()), node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
   };
@@ -4240,14 +4253,14 @@ function markerPlanOf(timelineNode) {
 }
 const TIMELINE_NODE = "NKDTimeline";
 function findMarkerSource(node, slotName, depth = 0) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a, _b, _c, _d, _e;
   if (!node || depth > 4) return null;
   const slot = (_a = node.inputs) == null ? void 0 : _a.find((i) => i.name === slotName);
   if (!slot || slot.link == null) return null;
-  const link = (_c = (_b = node.graph) == null ? void 0 : _b.links) == null ? void 0 : _c[slot.link];
-  const origin = link && ((_d = node.graph) == null ? void 0 : _d.getNodeById(link.origin_id));
+  const link = (_b = node.graph) == null ? void 0 : _b.getLink(slot.link);
+  const origin = link && ((_c = node.graph) == null ? void 0 : _c.getNodeById(link.origin_id));
   if (!origin) return null;
-  if (origin.type === TIMELINE_NODE && ((_f = (_e = origin.outputs) == null ? void 0 : _e[link.origin_slot]) == null ? void 0 : _f.name) === "markers") {
+  if (origin.type === TIMELINE_NODE && ((_e = (_d = origin.outputs) == null ? void 0 : _d[link.origin_slot]) == null ? void 0 : _e.name) === "markers") {
     return origin;
   }
   for (const inp of origin.inputs ?? []) {
@@ -4406,11 +4419,18 @@ async function reveal(ref) {
   });
   await api.fetchApi(`/nkd/open?${q}`);
 }
+const LS_VERSIONING = "nkd_save_versioning";
+function saveVersioning() {
+  return localStorage.getItem(LS_VERSIONING) === "off" ? "off" : "auto";
+}
+function setSaveVersioning(v) {
+  localStorage.setItem(LS_VERSIONING, v);
+}
 async function saveToProject(ref, prefix) {
   const res = await api.fetchApi("/nkd/save", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...ref, prefix })
+    body: JSON.stringify({ ...ref, prefix, versioning: saveVersioning() })
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
@@ -4470,6 +4490,18 @@ function openPicker(x, y) {
       on: () => void setActive(void 0, c)
     });
   }
+  items.push({ label: "Versioning", header: true });
+  const mode = saveVersioning();
+  items.push({
+    label: "off (counter)",
+    active: mode === "off",
+    on: () => setSaveVersioning("off")
+  });
+  items.push({
+    label: "auto (next version)",
+    active: mode === "auto",
+    on: () => setSaveVersioning("auto")
+  });
   items.push({ label: " ", header: true });
   items.push({ label: "⚙ Manage projects…", on: () => openManager() });
   openMenu(x, y, items);
@@ -5727,6 +5759,7 @@ function restoreView(node, tl) {
   if (!v || typeof v !== "object") return;
   if (Number.isFinite(Number(v.zoom))) tl.ui.zoom = Number(v.zoom);
   if (Number.isFinite(Number(v.scroll))) tl.ui.scroll = Number(v.scroll);
+  if (Number.isFinite(Number(v.playhead))) tl.ui.playhead = Number(v.playhead);
 }
 function makeHost(node, state, pool, audioOnly = false) {
   const numW = (name, def) => {
@@ -5753,6 +5786,13 @@ function makeHost(node, state, pool, audioOnly = false) {
       node.properties[VIEW_PROP] = viewState(state.tl);
       node.setDirtyCanvas(true, true);
       syncAllFreezeNodes();
+    },
+    saveView() {
+      node.properties = node.properties || {};
+      node.properties[VIEW_PROP] = viewState(state.tl);
+    },
+    onSeek() {
+      node.setDirtyCanvas(true, true);
     },
     getFps: () => numW("fps", 24),
     getStartFrame: () => Math.max(0, Math.round(numW("start_frame", 0))),

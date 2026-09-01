@@ -123,6 +123,28 @@ function isPrimary(nodeId) {
     return String(nodeId) === primaryNodeId;
 }
 
+// The popup node the shortcuts act on: the marked primary, or the sole popup
+// node if none is marked. Emits a toast and returns null when it can't decide
+// (none exist, or several exist with none marked).
+function resolvePrimaryNode() {
+    const nodes = (app.graph?._nodes ?? []).filter(n => n.comfyClass === NODE_TYPE);
+    if (primaryNodeId) {
+        const n = nodes.find(x => String(x.id) === primaryNodeId);
+        if (n) return n;
+        setPrimary(null); // marked node is gone
+    }
+    if (nodes.length === 1) return nodes[0];
+    app.extensionManager?.toast?.add?.({
+        severity: "warn",
+        summary: nodes.length === 0 ? "No Popup Preview Node" : "Multiple Popup Nodes",
+        detail: nodes.length === 0
+            ? "Add a Popup Preview node to the graph."
+            : "Several Popup Preview nodes exist — right-click one → Set as primary preview.",
+        life: 5000,
+    });
+    return null;
+}
+
 // ── Send-to-LoadImage target ──────────────────────────────────────────────────
 
 const LS_LOAD_TARGET   = "nkd_load_target_id";
@@ -225,7 +247,7 @@ function findUpstreamSampler(nkdNode) {
         if (node !== nkdNode && SAMPLER_TYPES.has(node.type)) return node;
         for (const input of (node.inputs ?? [])) {
             if (!input?.link) continue;
-            const link = app.graph.links[input.link];
+            const link = app.graph.getLink(input.link);
             if (!link) continue;
             const upstream = app.graph.getNodeById(link.origin_id);
             if (upstream && !visited.has(upstream.id)) queue.push(upstream);
@@ -247,7 +269,7 @@ function collectUpstreamNodes(startNode) {
         out.push(node);
         for (const input of (node.inputs ?? [])) {
             if (!input?.link) continue;
-            const link = app.graph.links[input.link];
+            const link = app.graph.getLink(input.link);
             if (!link) continue;
             const upstream = app.graph.getNodeById(link.origin_id);
             if (upstream && !visited.has(upstream.id)) queue.push(upstream);
@@ -680,6 +702,8 @@ class PopupWin {
         this._pipMode           = false; // true when the window is a Document PiP
         this._refUrl            = null;  // when set, viewer opens in compare mode
         this._maskUrl           = null;  // when set, viewer offers mask overlay
+        this.wiredRef           = null;  // /view item from this node's wired `reference` input
+        this.wiredMask          = null;  // /view item from this node's wired `mask` input
         this._container         = null;  // live DOM element (bEpic pattern)
         this._livePreviewHandler = null; // b_preview_with_metadata listener
         this.savedRef           = null;  // where "save to project" last put it
@@ -750,11 +774,21 @@ class PopupWin {
         }
     }
 
+    /** Reference image/mask URLs for THIS node: the wired inputs win over the global NKD
+     *  Reference slot, mirroring the video viewer's wired `reference`. Nothing wired falls
+     *  back to the global slot, so an unwired popup behaves exactly as before. */
+    async _resolveRefUrls() {
+        return Promise.all([
+            this.wiredRef  ? buildViewUrl(this.wiredRef)  : getReferenceUrl(),
+            this.wiredMask ? buildViewUrl(this.wiredMask) : getReferenceMaskUrl(),
+        ]);
+    }
+
     /** Re-fetch the active reference image/mask and push to the open viewer so
      * Hold/Mask appear as soon as a reference exists — no need to reopen. */
     async refreshRefs() {
         if (!this.win || this.win.closed) return;
-        const [refUrl, maskUrl] = await Promise.all([getReferenceUrl(), getReferenceMaskUrl()]);
+        const [refUrl, maskUrl] = await this._resolveRefUrls();
         this._refUrl = refUrl; this._maskUrl = maskUrl;
         // Floating panel: live DOM container. PiP / OS window: bridged function.
         if (this._container?._nkdSetRefs) {
@@ -772,7 +806,7 @@ class PopupWin {
             if (!this._pipMode) this.win.focus();
             return;
         }
-        [this._refUrl, this._maskUrl] = await Promise.all([getReferenceUrl(), getReferenceMaskUrl()]);
+        [this._refUrl, this._maskUrl] = await this._resolveRefUrls();
         this._openViewer();
     }
 
@@ -1357,8 +1391,15 @@ async function saveImage(popup, node) {
     if (!ref) return _noImageToast();
     let prefix = undefined;
     const cfg = nkdConfig();
-    if (cfg) {
-        prefix = cfg.image_prefix.replaceAll("%node%", _cleanTitle(node));
+    const wv   = (n) => node?.widgets?.find((w) => w.name === n)?.value;
+    const pfx  = String(wv("filename_prefix") || "").trim();   // per-node folder override
+    const name = String(wv("filename") || "").trim();          // per-node file name
+    // Node fields win over the global project prefix; empty falls back to it. Same
+    // folder/name join as the video viewer's `_resolve_prefix`.
+    let base = pfx || (cfg ? cfg.image_prefix : undefined);
+    if (base !== undefined) {
+        if (name) base = `${base.replace(/\/+$/, "")}/${name}`;
+        prefix = base.replaceAll("%node%", _cleanTitle(node));
         // The core expands its own %date:...% at prompt-submit time; nothing submits a
         // prompt here, so it has to be done by hand or the token reaches the path literal.
         try {
@@ -1445,7 +1486,9 @@ function buildNodePanel(node) {
     // node for nothing. Just the bar and the destination line.
     const root  = _el("div", "nkd-tl nkd-vid");
 
-    const bar = _el("div", "nkd-tl-bar", root);
+    // nkd-pp-bar: nowrap + max-content width, so the button row never wraps to a second line
+    // and its intrinsic width can be measured (offsetWidth) to set the node's minimum.
+    const bar = _el("div", "nkd-tl-bar nkd-pp-bar", root);
     _btn(bar, "pi-external-link", "Open the viewer window", () => openViewer(node));
     _btn(bar, "pi-copy", "Copy the image to the clipboard",
          () => copyImageToClipboard(popup.currentUrl || _refUrl(currentRef(node, popup))));
@@ -1471,6 +1514,9 @@ function buildNodePanel(node) {
 
     const mounted = mountDomWidget(node, {
         name: "nkd_popup", type: "NKD_POPUP", root, minWidth: MIN_PANEL_W,
+        // The node never gets narrower than the (nowrap) button row, so the buttons never
+        // wrap. bar.offsetWidth is intrinsic because .nkd-pp-bar is width:max-content.
+        minWidthOf: () => bar.offsetWidth + 1,
         estimate: () => 56,   // one button row plus the path line
     });
 
@@ -1589,26 +1635,8 @@ app.registerExtension({
             label: "NKD: Queue Primary Popup Node",
             icon: "pi pi-play",
             async function() {
-                if (!primaryNodeId) {
-                    app.extensionManager?.toast?.add?.({
-                        severity: "warn",
-                        summary: "No Primary Node",
-                        detail: "Mark a Popup Preview node as primary first.",
-                        life: 5000,
-                    });
-                    return;
-                }
-                const node = app.graph?.getNodeById(Number(primaryNodeId));
-                if (!node) {
-                    app.extensionManager?.toast?.add?.({
-                        severity: "warn",
-                        summary: "Primary Node Not Found",
-                        detail: "The primary node no longer exists in the graph.",
-                        life: 5000,
-                    });
-                    setPrimary(null);
-                    return;
-                }
+                const node = resolvePrimaryNode();
+                if (!node) return;
                 await _queueNode(node);
             },
         },
@@ -1617,27 +1645,9 @@ app.registerExtension({
             label: "NKD: Open Primary Popup Viewer",
             icon: "pi pi-external-link",
             function() {
-                if (!primaryNodeId) {
-                    app.extensionManager?.toast?.add?.({
-                        severity: "warn",
-                        summary: "No Primary Node",
-                        detail: "Mark a Popup Preview node as primary first.",
-                        life: 5000,
-                    });
-                    return;
-                }
-                const node = app.graph?.getNodeById(Number(primaryNodeId));
-                if (!node) {
-                    app.extensionManager?.toast?.add?.({
-                        severity: "warn",
-                        summary: "Primary Node Not Found",
-                        detail: "The primary node no longer exists in the graph.",
-                        life: 5000,
-                    });
-                    setPrimary(null);
-                    return;
-                }
-                const p = getPopup(primaryNodeId);
+                const node = resolvePrimaryNode();
+                if (!node) return;
+                const p = getPopup(node.id);
                 if (p.win && !p.win.closed) {
                     p.destroy();
                 } else {
@@ -1680,6 +1690,10 @@ app.registerExtension({
             const node = app.graph?.getNodeById(detail.node);
             if (!node || node.comfyClass !== NODE_TYPE) return;
             const popup = getPopup(node.id);
+            // This node's own wired reference/mask (if any) win over the global slot.
+            // Absent keys clear it, so unwiring the input reverts to the global reference.
+            popup.wiredRef  = detail.output.nkd_ref?.[0]  || null;
+            popup.wiredMask = detail.output.nkd_mask?.[0] || null;
             popup.setTitle(node.title || "Preview Window");
             popup.showImage(detail.output.images[0]);
         });
@@ -1787,7 +1801,31 @@ app.registerExtension({
             // why the panel below has no picture of its own.
             this.onExecuted = function () {};
 
+            // Native filename_prefix / filename widgets, a per-node override of the global
+            // project prefix (empty = use the global). Frontend-only widgets, NOT schema
+            // inputs: the save runs entirely in the frontend, so there is no reason to feed
+            // them to the backend and put them in the cache signature. They still serialise
+            // into widgets_values and travel with the workflow. The DOM panel widget is
+            // serialize:false, so these two are the only serialised widgets — positions stable.
+            this.addWidget("text", "filename_prefix", "%project%/%category%/", () => {},
+                { tooltip: "Folder for the saved still (tokens: %project% %category% %node% " +
+                           "%date:yyyy-MM-dd%). Empty uses the active project's prefix." });
+            this.addWidget("text", "filename", "NKD", () => {},
+                { tooltip: "File name for the saved still. Empty keeps the prefix's own name." });
+
             const panel = buildNodePanel(this);
+
+            // Let the node be dragged TALLER than the panel, so ComfyUI's own preview (drawn
+            // above the panel from nodeOutputs) grows like a normal Preview Image. The DOM
+            // host pins height to its content on every resize — right for the timeline's
+            // canvas widget, wrong here — so re-wrap onResize to treat that content height as
+            // a FLOOR and keep any larger height the user dragged to.
+            const hostResize = this.onResize;
+            this.onResize = function (size) {
+                const wanted = size[1];              // the height the drag asked for
+                hostResize?.apply(this, arguments);  // clamps width + pins height to content
+                if (wanted > size[1]) size[1] = wanted;
+            };
 
             // Keep the primary outline painted on each redraw (canvas / classic LiteGraph
             // only; V2 Vue uses node.color instead).
@@ -1904,7 +1942,7 @@ const _REF_MSK_COLOR = "#1e3a1e", _REF_MSK_BG = "#0f1f0f"; // green = mask
 function _refConnectedType(node) {
     const inp = node.inputs?.[0];
     if (!inp || inp.link == null) return null;
-    const t = node.graph?.links?.[inp.link]?.type;
+    const t = node.graph?.getLink(inp.link)?.type;
     return typeof t === "string" ? t.toUpperCase() : null;
 }
 

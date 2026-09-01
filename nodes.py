@@ -297,9 +297,12 @@ async def _nkd_save(request: web.Request) -> web.Response:
         str(body.get("prefix") or cfg["image_prefix"]), nkd_projects.tokens())
     ext = os.path.splitext(filename)[1] or ".png"
     root = folder_paths.get_output_directory()
-    full_folder, name, counter, subfolder, _ = folder_paths.get_save_image_path(prefix, root)
+    # Versioning matches the video viewer (off/auto/manual) so this copy no longer just
+    # stamps a bare counter — the frontend chip menu picks the mode.
+    full_folder, out_name, subfolder = nkd_video.save_target(
+        prefix, root, ext,
+        str(body.get("versioning") or "off"), int(body.get("version") or 1))
     os.makedirs(full_folder, exist_ok=True)
-    out_name = f"{name}_{counter:05}_{ext}"
     shutil.copy2(src, os.path.join(full_folder, out_name))
     return web.json_response({"filename": out_name, "subfolder": subfolder, "type": "output",
                               "path": os.path.join(full_folder, out_name)})
@@ -357,20 +360,61 @@ class NKDReferenceImage(io.ComfyNode):
         return io.NodeOutput()
 
 
-# ── NKDPopupPreviewNode (unchanged) ───────────────────────────────────────────
+# ── NKDPopupPreviewNode ───────────────────────────────────────────────────────
+
+class NKDPopupUI(_UIOutput):
+    """PreviewImage plus this node's OWN wired reference/mask items.
+
+    The popup viewer already flashes a reference and tints a mask, but only from the
+    GLOBAL NKD Reference slot - so two viewers show the same thing. Carrying the items in
+    this node's UI payload lets the frontend prefer them for THIS node, the same way the
+    video viewer's wired `reference` input wins over the global slot. Nothing wired ->
+    neither key is emitted and the viewer falls back to the global slot, unchanged.
+    """
+
+    def __init__(self, images_ui, ref=None, mask=None):
+        self._images = images_ui
+        self._ref = ref
+        self._mask = mask
+
+    def as_dict(self):
+        d = dict(self._images.as_dict())   # {"images": [...]}
+        if self._ref:
+            d["nkd_ref"] = [self._ref]
+        if self._mask:
+            d["nkd_mask"] = [self._mask]
+        return d
+
 
 class NKDPopupPreviewNode(io.ComfyNode):
     @classmethod
     def define_schema(cls):
         return io.Schema(
             node_id="NKDPopupPreviewNode",
-            display_name="😺NKD Popup Preview",
+            display_name="😺NKD Popup Preview / Saver",
             category="😺NKD Nodes/Preview",
             description=(
                 "Preview an image in a floating window on top of the browser. "
-                "The window can be moved to a secondary monitor and maximised."
+                "The window can be moved to a secondary monitor and maximised. "
+                "Saves the still into the active project's folder, with an optional "
+                "per-node folder/name override and off/auto versioning. Wire the optional "
+                "reference/mask inputs to compare against them right here instead of a "
+                "far-away NKD Reference node."
             ),
-            inputs=[io.Image.Input("image")],
+            # `reference`/`mask` are OPTIONAL and appended AFTER `image`, so a saved workflow
+            # (which only ever had `image` wired at socket 0) is untouched. A wired reference
+            # is flashed (press-and-hold) in the viewer; a wired mask is a tinted overlay.
+            inputs=[
+                io.Image.Input("image"),
+                io.Image.Input(
+                    "reference", optional=True,
+                    tooltip="Optional reference image — hold in the viewer to flash it over "
+                            "this preview (A/B). Wins over the global NKD Reference slot."),
+                io.Mask.Input(
+                    "mask", optional=True,
+                    tooltip="Optional mask — shown as a tinted overlay in the viewer. "
+                            "Wins over the global NKD Reference mask."),
+            ],
             outputs=[],
             is_output_node=True,
             not_idempotent=True,
@@ -378,8 +422,11 @@ class NKDPopupPreviewNode(io.ComfyNode):
         )
 
     @classmethod
-    def execute(cls, image):
-        return io.NodeOutput(ui=ui.PreviewImage(image, cls=cls))
+    def execute(cls, image, reference=None, mask=None):
+        ref_item = _save_reference_png(reference)[1] if reference is not None else None
+        mask_item = _save_reference_mask_png(mask)[1] if mask is not None else None
+        return io.NodeOutput(
+            ui=NKDPopupUI(ui.PreviewImage(image, cls=cls), ref_item, mask_item))
 
 
 # ── Extension ─────────────────────────────────────────────────────────────────

@@ -86,12 +86,13 @@ console.log("[NKD Timeline] rev 3.10.2");
 /** Where the view state lives instead of the widget. See `serialiseTimeline`. */
 const VIEW_PROP = "nkdView";
 
-/** Put zoom/scroll back on a timeline that was just parsed from the widget. */
+/** Put zoom/scroll/playhead back on a timeline that was just parsed from the widget. */
 function restoreView(node: any, tl: Timeline): void {
   const v = node.properties?.[VIEW_PROP];
   if (!v || typeof v !== "object") return;
   if (Number.isFinite(Number(v.zoom))) tl.ui.zoom = Number(v.zoom);
   if (Number.isFinite(Number(v.scroll))) tl.ui.scroll = Number(v.scroll);
+  if (Number.isFinite(Number(v.playhead))) tl.ui.playhead = Number(v.playhead);
 }
 
 type SourceEntry = { ref: MediaRef; info: MediaInfo | null; label: string };
@@ -141,16 +142,20 @@ function makeHost(node: any, state: { tl: Timeline }, pool: () => VideoPool,
     commit() {
       const w = findW(node, "timeline");
       if (w) w.value = serialiseTimeline(state.tl);
-      // Zoom and scroll ride in `properties`, NOT in the widget: LiteGraph saves them with
-      // the workflow, but they are not a node input, so panning the view no longer throws
-      // away a fifteen-second render.
+      // Zoom, scroll and playhead ride in `properties`, NOT in the widget: LiteGraph saves
+      // them with the workflow, but they are not a node input, so scrubbing/panning no
+      // longer throws away a fifteen-second render.
       node.properties = node.properties || {};
       node.properties[VIEW_PROP] = viewState(state.tl);
       node.setDirtyCanvas(true, true);
-      // A downstream Freeze Frames draws one socket per marker, and it can only learn the
-      // count by reading THIS widget. Pushing from here is what makes pressing M grow the
-      // sockets straight away instead of after a run.
       syncAllFreezeNodes();
+    },
+    saveView() {
+      node.properties = node.properties || {};
+      node.properties[VIEW_PROP] = viewState(state.tl);
+    },
+    onSeek() {
+      node.setDirtyCanvas(true, true);
     },
     getFps: () => numW("fps", 24),
     getStartFrame: () => Math.max(0, Math.round(numW("start_frame", 0))),

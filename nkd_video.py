@@ -138,6 +138,29 @@ def has_version(prefix: str) -> bool:
     return bool(VERSION_RE.search(prefix))
 
 
+def save_target(prefix: str, root: str, ext: str,
+                versioning: str = "off", version: int = 1) -> tuple[str, str, str]:
+    """Where a copied still lands: (full_folder, out_name, subfolder).
+
+    Same naming machinery the video viewer uses (`_resolve_prefix`), pulled out so the
+    Popup Preview's `/nkd/save` copy gets versioning too instead of only a raw counter:
+      off    -> a `_00001_` counter, the core's SaveImage convention (never overwrites).
+      auto   -> `_vNNN` at the next free version.
+      manual -> `_vNNN` at exactly `version` (re-saving overwrites, like a Write node).
+    The version token is appended to the NAME when the prefix carries none, exactly as
+    `_resolve_prefix` does.
+    """
+    if versioning != "off":
+        if not has_version(prefix):
+            prefix = f"{prefix}_v%v{'#' * DEFAULT_VERSION_PAD}%"
+        used = version if versioning == "manual" else next_version(root, prefix, version_pad(prefix))
+        prefix = apply_version(prefix, used)
+        full_folder, name, _, subfolder, _ = folder_paths.get_save_image_path(prefix, root)
+        return full_folder, f"{name}{ext}", subfolder
+    full_folder, name, counter, subfolder, _ = folder_paths.get_save_image_path(prefix, root)
+    return full_folder, f"{name}_{counter:05}_{ext}", subfolder
+
+
 # ── Formats ───────────────────────────────────────────────────────────────────
 # The key IS the combo label, so it reads as "container / codec" the way an export dialog
 # does. Everything downstream keys off this table rather than off scattered ifs.

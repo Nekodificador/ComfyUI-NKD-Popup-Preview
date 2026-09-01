@@ -536,6 +536,9 @@ def test_audio_only_clip_is_a_gap_that_still_sounds():
     assert float(holed["generate"][5].min()) == 1.0         # generate 1 - regenerate it
     assert float(holed["images"][1].max()) > 0.0           # the halves either side are untouched
     assert float(holed["images"][9].max()) > 0.0
+    # raw_images: the audioOnly clip's picture is still there.
+    assert float(holed["raw_images"][5].max()) > 0.0
+    assert torch.allclose(whole["images"], whole["raw_images"])   # no audioOnly -> same
     # Sound: unchanged. That is the whole point of the flag.
     assert torch.allclose(whole["audio"]["waveform"], holed["audio"]["waveform"])
     assert float(holed["audio"]["waveform"].abs().max()) > 0.0

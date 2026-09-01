@@ -83,7 +83,7 @@ export function resolveSource(node: any, slotName: string, maxDepth = 6,
   if (depth > maxDepth) return null;
   const slot = node?.inputs?.find((i: any) => i.name === slotName || i.name?.endsWith(`.${slotName}`));
   if (!slot || slot.link == null) return null;
-  const link = node.graph?.links?.[slot.link];
+  const link = node.graph?.getLink(slot.link);
   const src = link && node.graph?.getNodeById(link.origin_id);
   if (!src) return null;
 
@@ -133,7 +133,7 @@ export function slotKind(node: any, slotName: string): MediaKind | null {
   const slot = node?.inputs?.find(
     (i: any) => i.name === slotName || i.name?.endsWith(`.${slotName}`));
   if (!slot || slot.link == null) return null;
-  const link = node.graph?.links?.[slot.link];
+  const link = node.graph?.getLink(slot.link);
   let type = link?.type;
   if (!type && link) {
     const src = node.graph?.getNodeById(link.origin_id);

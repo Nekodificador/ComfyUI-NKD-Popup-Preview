@@ -190,6 +190,11 @@ const CSS = `
    No thumbnail of its own: ComfyUI already renders the node's preview from nodeOutputs,
    so one was the same pixels twice and a taller node for nothing.
    (No backticks in this file: the CSS lives in a template literal.) */
+.nkd-pp-bar {
+  flex-wrap: nowrap;       /* the buttons must never drop to a second line */
+  width: max-content;      /* content-sized, so offsetWidth is the intrinsic row width */
+  max-width: none;
+}
 `;
 
 export function ensureStyles(): void {

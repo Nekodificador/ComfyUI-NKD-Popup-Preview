@@ -71,7 +71,7 @@ function findMarkerSource(node: any, slotName: string, depth = 0): any | null {
   if (!node || depth > 4) return null;
   const slot = node.inputs?.find((i: any) => i.name === slotName);
   if (!slot || slot.link == null) return null;
-  const link = node.graph?.links?.[slot.link];
+  const link = node.graph?.getLink(slot.link);
   const origin = link && node.graph?.getNodeById(link.origin_id);
   if (!origin) return null;
   if (origin.type === TIMELINE_NODE

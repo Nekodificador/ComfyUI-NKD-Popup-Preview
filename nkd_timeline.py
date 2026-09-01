@@ -971,6 +971,27 @@ def _push_meta(node_id: Any, data: dict) -> None:
         pass
 
 
+def _read_playhead(cls: Any, node_id: Any) -> int:
+    """Fish the playhead out of extra_pnginfo's workflow properties.
+
+    The playhead lives in node.properties.nkdView.playhead — outside the widget — so
+    that scrubbing does not invalidate ComfyUI's cache. Returns 0 when unavailable
+    (tests, old workflows, missing data).
+    """
+    extra = getattr(getattr(cls, "hidden", None), "extra_pnginfo", None)
+    if not extra or not isinstance(extra, dict):
+        return 0
+    wf = extra.get("workflow")
+    if not isinstance(wf, dict):
+        return 0
+    for n in wf.get("nodes") or []:
+        if str(n.get("id")) == str(node_id):
+            props = n.get("properties") or {}
+            view = props.get("nkdView") or {}
+            return max(0, int(view.get("playhead", 0)))
+    return 0
+
+
 # ── The node ──────────────────────────────────────────────────────────────────
 
 class NKDTimeline(io.ComfyNode):
@@ -1136,9 +1157,16 @@ class NKDTimeline(io.ComfyNode):
                                  tooltip="Comma-separated indices of the freeze-frame "
                                          "markers (press M on a clip), counted INTO the "
                                          "'images' batch. Feed it to NKD Freeze Frames."),
+                io.Image.Output(display_name="raw_images",
+                                tooltip="The timeline cut as-is: every clip contributes "
+                                        "its picture, including audio-only clips. Gaps "
+                                        "with no material are black. Use as reference "
+                                        "for models that need the original video."),
             ],
-            # Needed to address the push below at THIS node's editor.
-            hidden=[io.Hidden.unique_id],
+            # unique_id: needed to address the push below at THIS node's editor.
+            # extra_pnginfo: carries the playhead from node.properties — the playhead
+            # is kept OUT of the widget to avoid cache invalidation on every scrub.
+            hidden=[io.Hidden.unique_id, io.Hidden.extra_pnginfo],
             # So the node can be executed ON ITS OWN, which is how a computed IMAGE/MASK
             # gets its contact sheet without running the samplers downstream: deciding
             # where to cut a mask has to be possible BEFORE generating anything.
@@ -1294,6 +1322,36 @@ class NKDTimeline(io.ComfyNode):
         if not bool(written.all()):
             out[(~written).nonzero().flatten()] = 0.0
 
+        # raw_images: same as `out` but audioOnly clips keep their picture.
+        ao_clips = [c for c in clips if c.get("audioOnly")]
+        if ao_clips:
+            raw_out = out.clone()
+            raw_written = written.clone()
+            for clip in ao_clips:
+                a = max(clip["start"], start_frame)
+                b = min(clip["start"] + clip["length"], end_frame)
+                if b <= a:
+                    continue
+                kind, obj = sources[clip["src"]]
+                frames, _ = gather_window(kind, obj, clip, a, b, fps)
+                if frames is None:
+                    continue
+                lo_i, hi_i = a - start_frame, b - start_frame
+                fitted = fit_frames(_to_rgb(frames), width, height, fit)
+                mode = track_blend(tl["tracks"], clip["track"])
+                if mode == "normal":
+                    raw_out[lo_i:hi_i] = fitted
+                else:
+                    base = raw_out[lo_i:hi_i]
+                    blended = blend_pixels(base, fitted, mode).clamp(0.0, 1.0)
+                    have = raw_written[lo_i:hi_i].view(-1, 1, 1, 1)
+                    raw_out[lo_i:hi_i] = torch.where(have, blended, fitted)
+                raw_written[lo_i:hi_i] = True
+            if not bool(raw_written.all()):
+                raw_out[(~raw_written).nonzero().flatten()] = 0.0
+        else:
+            raw_out = out
+
         # The mask lane. A mask clip may point at ANY slot: a real MASK passes through, an
         # image or video is read as luminance. That is "use this video as a mask".
         for clip in maskclips:
@@ -1331,11 +1389,12 @@ class NKDTimeline(io.ComfyNode):
         audio_out = {"waveform": mix_audio(audio_segments, total_samples, sample_rate),
                      "sample_rate": sample_rate}
 
-        current = max(0, min(tl["playhead"], count - 1))
-        # The frame under the playhead, as a one-image batch. Taken from `out`, so it is
-        # the FULLY COMPOSITED frame - track blends and all - not a re-read of a source.
-        # Scrubbing changes the timeline widget, which invalidates the cache, so this
-        # tracks the playhead on the next run: the playhead drives the graph.
+        # The playhead lives in node.properties (NOT in the widget) so that scrubbing
+        # does not invalidate ComfyUI's cache. Read it from the workflow embedded in
+        # extra_pnginfo, falling back to the timeline JSON for old workflows.
+        node_id = getattr(getattr(cls, "hidden", None), "unique_id", None)
+        current = _read_playhead(cls, node_id) or tl["playhead"]
+        current = max(0, min(current, count - 1))
         current_image = out[current:current + 1]
 
         # Seconds, from the QUANTISED count - what actually gets rendered, not what was
@@ -1362,7 +1421,6 @@ class NKDTimeline(io.ComfyNode):
         # output IS a widget, which a computed selector's is not.
         # `cls.hidden` is only populated by the runtime; calling execute() directly (the
         # tests, or any script driving the node) leaves it None.
-        node_id = getattr(getattr(cls, "hidden", None), "unique_id", None)
         _push_meta(node_id, {
             "width": int(width), "height": int(height),
             "frame_count": int(count), "fps": float(fps),
@@ -1413,7 +1471,8 @@ class NKDTimeline(io.ComfyNode):
         return io.NodeOutput(out, mask_out, coverage, generate, audio_out,
                              audio_mask, audio_ranges,
                              int(width), int(height), float(fps), int(count),
-                             float(duration), int(current), current_image, markers)
+                             float(duration), int(current), current_image, markers,
+                             raw_out)
 
 
 def parse_frame_list(raw: str, total: int) -> list[int]:

@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.dirname(os.path.abspath(__file__))))))
 
 import nkd_projects  # noqa: E402
-from nkd_video import resolve_tokens  # noqa: E402
+from nkd_video import resolve_tokens, save_target  # noqa: E402
 
 _tmp = tempfile.mkdtemp(prefix="nkd_proj_")
 # Point the module at a scratch user dir and clear its cache, so the developer's real
@@ -120,6 +120,33 @@ def test_uses_tokens_only_fires_for_prefixes_that_care():
     assert nkd_projects.uses_tokens("%project%/x")
     assert nkd_projects.uses_tokens("a/%category%")
     assert not nkd_projects.uses_tokens("video/NKD_v%v###%")
+
+
+def test_save_target_versions_instead_of_overwriting():
+    # The Popup Preview save bug: it must never write the same name twice.
+    root = tempfile.mkdtemp(prefix="nkd_save_")
+
+    def touch(vmode, ver=1):
+        folder, name, _ = save_target("shot/NKD", root, ".png", vmode, ver)
+        os.makedirs(folder, exist_ok=True)
+        open(os.path.join(folder, name), "w").close()
+        return name
+
+    # off: the core's _NNNNN_ counter walks forward, no collision.
+    assert touch("off") == "NKD_00001_.png"
+    assert touch("off") == "NKD_00002_.png"
+
+    # auto: _vNNN appended to the name, next free each time.
+    assert touch("auto") == "NKD_v001.png"
+    assert touch("auto") == "NKD_v002.png"
+
+    # manual: exactly the asked version — re-saving overwrites on purpose (Write-node rule).
+    assert touch("manual", 5) == "NKD_v005.png"
+    assert touch("manual", 5) == "NKD_v005.png"
+
+    # A prefix that already carries the token keeps its own placement/padding.
+    folder, name, _ = save_target("shot/NKD_v%v####%", root, ".png", "manual", 7)
+    assert name == "NKD_v0007.png"
 
 
 def test_a_broken_file_does_not_take_the_render_down():

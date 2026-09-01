@@ -172,9 +172,9 @@ test("serialiseTimeline — round trip, no transient fields", () => {
   assert.deepEqual(round.clips[0], {
     id: "a", src: "video_0", track: 1, start: 4, trimIn: 2, length: 8,
   });
-  // The playhead persists in the widget on purpose - it drives current_frame /
-  // current_image, so a scrub SHOULD invalidate the render. The zoom must not.
-  assert.equal(round.ui.playhead, 3);
+  // The playhead lives in node.properties (via viewState), NOT in the widget
+  // JSON: scrubbing must not invalidate the cache. Zoom/scroll too.
+  assert.equal(JSON.parse(M.serialiseTimeline(t)).ui.playhead, undefined);
   assert.equal(JSON.parse(M.serialiseTimeline(t)).ui.zoom, undefined);
 });
 
@@ -588,7 +588,7 @@ test("viewWindow — zoom and scroll stay inside the content", () => {
   // JSON: the widget is a node input, so a wheel tick there would cost a full re-render.
   const t = M.emptyTimeline();
   t.ui.zoom = 6; t.ui.scroll = 42;
-  assert.deepEqual(M.viewState(t), { zoom: 6, scroll: 42 });
+  assert.deepEqual(M.viewState(t), { zoom: 6, scroll: 42, playhead: 0 });
   const json = JSON.parse(M.serialiseTimeline(t));
   assert.equal(json.ui.zoom, undefined);
   assert.equal(json.ui.scroll, undefined);
@@ -993,9 +993,10 @@ test("gainAt is the same curve Python renders", () => {
 
 test("fades survive a round trip, and absent ones stay absent", () => {
   // A workflow saved before fades existed must come back byte-identical.
+  // playhead is no longer in ui (it lives in node.properties now).
   const plain = '{"v":1,'
     + '"clips":[{"id":"a","src":"m","track":0,"start":0,"trimIn":0,"length":10}],'
-    + '"masks":[],"tracks":[],"audio":[],"ui":{"playhead":0}}';
+    + '"masks":[],"tracks":[],"audio":[],"ui":{}}';
   assert.equal(M.serialiseTimeline(M.parseTimeline(plain)), plain);
 
   const tl = M.parseTimeline(JSON.stringify({

@@ -56,8 +56,9 @@ export function setWidgetVisible(node: any, name: string, visible: boolean): voi
  * precisely when it breaks.
  */
 export function keepDomWidgetSized(
-  node: any, container: HTMLElement, minW: number,
+  node: any, container: HTMLElement, minW: number | (() => number),
 ): { release: () => void; margin: () => number } {
+  const mw = () => (typeof minW === "function" ? minW() : minW);
   const MAX_MARGIN = 40;
   let enforcing = false;
   // The gutter ComfyUI leaves between the node's border and the widget column. Starts at
@@ -74,7 +75,8 @@ export function keepDomWidgetSized(
     if (vueMode()) {
       if (container.style.width) container.style.width = "";
       const el = document.querySelector(`[data-node-id="${node.id}"]`) as HTMLElement | null;
-      if (el && el.style.minWidth !== `${minW}px`) el.style.minWidth = `${minW}px`;
+      const want = `${mw()}px`;
+      if (el && el.style.minWidth !== want) el.style.minWidth = want;
       return;
     }
     const nodeW = node.size?.[0];
@@ -121,6 +123,10 @@ export interface MountOpts {
   /** The content element. Its `offsetHeight` is the measured height. */
   root: HTMLElement;
   minWidth: number;
+  /** Optional MEASURED minimum content width, re-read live (e.g. a button row that must not
+   *  wrap, whose width varies with a label). The node min never drops below max(this,
+   *  minWidth). Returns 0 before it can be measured, so `minWidth` is the floor. */
+  minWidthOf?: () => number;
   /** Height to report before the content has been measured even once. */
   estimate: () => number;
   getValue?: () => any;
@@ -149,7 +155,11 @@ export interface Mounted {
 export function mountDomWidget(node: any, opts: MountOpts): Mounted {
   const container = document.createElement("div");
   container.style.width = "100%";
-  container.style.minWidth = `${opts.minWidth}px`;
+  // The content's desired min width: the static floor, or a live measurement when the
+  // content must not wrap (the popup's button bar). max() so a not-yet-measured 0 can't
+  // shrink below the floor.
+  const wantWidth = () => Math.max(opts.minWidth, Math.ceil(opts.minWidthOf?.() ?? 0));
+  container.style.minWidth = `${wantWidth()}px`;
   container.appendChild(opts.root);
 
   let measured = 0;
@@ -167,14 +177,14 @@ export function mountDomWidget(node: any, opts: MountOpts): Mounted {
     getHeight: heightFor,
   });
 
-  const widthKeeper = keepDomWidgetSized(node, container, opts.minWidth);
+  const widthKeeper = keepDomWidgetSized(node, container, wantWidth);
   /**
    * `minWidth` is what the CONTENT needs; the node also has to pay for the gutter ComfyUI
    * leaves around the widget column. Clamping the node to minWidth alone is what leaves the
    * widget lopsided - see `keepDomWidgetSized`. `margin()` is the measured TOTAL, so it is
    * added once, not per side.
    */
-  const minNodeWidth = () => opts.minWidth + widthKeeper.margin();
+  const minNodeWidth = () => wantWidth() + widthKeeper.margin();
 
   /**
    * The width clamp is the important half: the container carries `min-width`, so the DOM can
@@ -183,6 +193,9 @@ export function mountDomWidget(node: any, opts: MountOpts): Mounted {
    * preserved; this only ever raises it to the minimum.
    */
   const resizeToContent = () => {
+    // Keep the container floor in step with the live measurement so the DOM never wraps
+    // even while the node width is catching up.
+    container.style.minWidth = `${wantWidth()}px`;
     node.setSize([Math.max(node.size[0], minNodeWidth()), node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
   };

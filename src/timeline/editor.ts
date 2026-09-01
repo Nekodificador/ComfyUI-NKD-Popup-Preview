@@ -72,6 +72,10 @@ export interface TimelineHost {
   getKey(action: KeyAction, fallback: string): string;
   /** Surface a message in ComfyUI's own toast area. */
   notify(summary: string, detail: string, severity?: "info" | "warn"): void;
+  /** Persist zoom/scroll/playhead to node.properties without touching the widget. */
+  saveView(): void;
+  /** Called on a manual scrub — the playhead moved but no edit happened. */
+  onSeek(): void;
   /** Drop every cached view of the connected media and re-resolve from scratch. */
   reloadSources(): void;
   /** Source length in SOURCE frames, or null while unknown. */
@@ -1346,16 +1350,16 @@ export class TimelineEditor {
   private seek(frame: number, fromTransport = false): void {
     const max = Math.max(0, this.contentFrames - 1);
     this.tl.ui.playhead = Math.max(0, Math.min(max, Math.round(frame)));
+    // The playhead lives in node.properties, NOT in the widget: scrubbing must never
+    // invalidate ComfyUI's cache. Only real edits (cuts, trims, moves) call commit().
+    this.host.saveView();
     if (fromTransport) {
-      // Playback moves the playhead every frame. Serialising the whole timeline into the
-      // widget at 60 Hz is pure waste, so just repaint; it is persisted on stop.
       this.requestRender();
       return;
     }
-    // A manual scrub during playback wins: let the transport carry on from here instead
-    // of snapping back to wherever it had got to.
     if (this.transport.rate !== 0) this.transport.reanchor(this.tl.ui.playhead);
-    this.host.commit();
+    this.requestRender();
+    this.host.onSeek();
   }
 
   /** Requested count BEFORE quantising. In/out edits work on this, never on the
