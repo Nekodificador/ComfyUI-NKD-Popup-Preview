@@ -13,6 +13,8 @@
 4. Connect any valid `IMAGE` output (for example, from a *VAE Decode* node) to the `image` input socket.
 5. Click **Queue Prompt**. The pop-up window will open automatically and display the generated image.
 
+The node also passes the input through its `image` output, untouched, so it can sit inline in a chain (e.g. between *VAE Decode* and a *Save Image*) instead of dangling off a branch.
+
 ---
 
 [← All 😺NKD Preview Tools nodes](../README.md)

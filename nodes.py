@@ -415,7 +415,8 @@ class NKDPopupPreviewNode(io.ComfyNode):
                     tooltip="Optional mask — shown as a tinted overlay in the viewer. "
                             "Wins over the global NKD Reference mask."),
             ],
-            outputs=[],
+            # Pass-through so the preview can sit inline in a chain instead of dangling.
+            outputs=[io.Image.Output(display_name="image", tooltip="The input image, untouched.")],
             is_output_node=True,
             not_idempotent=True,
             hidden=[io.Hidden.prompt, io.Hidden.extra_pnginfo],
@@ -426,7 +427,7 @@ class NKDPopupPreviewNode(io.ComfyNode):
         ref_item = _save_reference_png(reference)[1] if reference is not None else None
         mask_item = _save_reference_mask_png(mask)[1] if mask is not None else None
         return io.NodeOutput(
-            ui=NKDPopupUI(ui.PreviewImage(image, cls=cls), ref_item, mask_item))
+            image, ui=NKDPopupUI(ui.PreviewImage(image, cls=cls), ref_item, mask_item))
 
 
 # ── Extension ─────────────────────────────────────────────────────────────────
