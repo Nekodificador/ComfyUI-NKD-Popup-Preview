@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-nkd-preview-tools"
 description = "Preview tools for ComfyUI: a floating popup preview, a multi-track video timeline, and a video viewer you can scrub, loop and compare before and after."
-version = "3.10.4"
+version = "3.10.5"
 license = { file = "LICENSE.txt" }
 dependencies  = []
 

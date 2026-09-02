@@ -205,13 +205,26 @@ def _is_local(request: web.Request) -> bool:
     return (request.remote or "") in ("127.0.0.1", "::1", "localhost")
 
 
+def _is_same_origin(request: web.Request) -> bool:
+    """Did this request come from ComfyUI's own page, not a third-party CSRF page?
+
+    `_is_local` alone isn't authentication (flagged by the registry's scanner, policy-v0.2
+    Rule 10 ARBITRARY_FILE_LAUNCH): any page open in the operator's browser can fire a plain
+    GET at localhost and land here too. `Sec-Fetch-Site` is a fetch metadata header the
+    browser itself attaches and JS cannot override, so it's a real cross-origin signal.
+    Sent by every browser this pack already requires for its DOM widgets; missing it fails
+    closed rather than guessing.
+    """
+    return request.headers.get("Sec-Fetch-Site") == "same-origin"
+
+
 @routes.get("/nkd/open")
 async def _nkd_open(request: web.Request) -> web.Response:
     """No args: whether revealing is possible at all. With a /view item: reveal it."""
     local = _is_local(request)
     if not request.query.get("filename"):
         return web.json_response({"available": local})
-    if not local:
+    if not local or not _is_same_origin(request):
         return web.Response(status=403, text="Only available on the ComfyUI machine")
     try:
         path, _, _, _ = _resolve_view(dict(request.query))
