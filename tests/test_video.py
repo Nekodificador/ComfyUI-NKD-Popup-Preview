@@ -103,6 +103,22 @@ def test_each_format_round_trips():
     print("  ok  test_each_format_round_trips")
 
 
+def test_odd_dimensions_are_cropped_to_even_for_yuv420p():
+    """h264/vp9 (yuv420p) reject an odd width/height outright — libx264 errors with
+    'width not divisible by 2' instead of rounding it itself. Any odd-sized IMAGE batch can
+    hit this (a free-drag crop node is the easy way), so `encode_video` has to defend itself
+    rather than trust the caller."""
+    images = ramp(4, h=33, w=47)
+    for key in ("mp4 / h264", "webm / vp9"):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, f"t.{FORMATS[key]['ext']}")
+            encode_video(images, path, FORMATS[key], 24.0, 23.0, None, None, None, None)
+            got = probe(path)
+            assert got["width"] % 2 == 0 and got["height"] % 2 == 0, (key, got)
+            assert (got["width"], got["height"]) == (46, 32), (key, got)
+    print("  ok  test_odd_dimensions_are_cropped_to_even_for_yuv420p")
+
+
 def test_prores_profiles_pick_the_right_pixel_format():
     """The profile IS the quality setting for ProRes, and only 4444 carries alpha.
 

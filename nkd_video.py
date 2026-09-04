@@ -394,6 +394,17 @@ def encode_video(images: torch.Tensor, path: str, spec: dict, fps: float,
     open_kwargs = {"mode": "w"}
     if spec["ext"] == "mp4":
         open_kwargs["options"] = {"movflags": "use_metadata_tags+faststart"}
+    # yuv420p (every codec here except ProRes) subsamples chroma 2x2, so libx264/libvpx
+    # reject an odd width or height outright ("width not divisible by 2") instead of
+    # rounding it themselves. Any odd-dimensioned IMAGE batch hits this — a free-drag crop
+    # is the easiest way to get one, but it is not the only one — so the guard belongs here,
+    # the one place every h264/vp9 render already routes through, not in each upstream node.
+    # A 1px edge crop is imperceptible; padding would have to fabricate a column instead.
+    if spec["vcodec"] != "prores_ks":
+        h, w = images.shape[1], images.shape[2]
+        if h % 2 or w % 2:
+            images = images[:, :h - h % 2, :w - w % 2, :]
+
     container = av.open(path, **open_kwargs)
     try:
         if metadata:
